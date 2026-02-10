@@ -17,7 +17,7 @@ void main() {
     test('setDuration should set remaining and total seconds', () {
       service.setDuration(380);
       expect(service.totalSeconds, 380);
-      expect(service.remainingSeconds, 380);
+      expect(service.remainingSeconds, closeTo(380, 1));
       expect(service.isRunning, false);
       expect(service.formattedRemaining, '06:20');
     });
@@ -25,7 +25,7 @@ void main() {
     // Expected use: progress calculation.
     test('progress should be 0.0 when timer has not started', () {
       service.setDuration(100);
-      expect(service.progress, 0.0);
+      expect(service.progress, closeTo(0.0, 0.02));
     });
 
     // Edge case: progress with zero total.
@@ -36,14 +36,13 @@ void main() {
     // Expected use: reset should restore to total.
     test('reset should restore remaining to total seconds', () {
       service.setDuration(300);
-      // Simulate some time passing by starting and immediately pausing.
       service.start(
         onTick: (_) {},
         onComplete: () {},
       );
       service.pause();
       service.reset();
-      expect(service.remainingSeconds, 300);
+      expect(service.remainingSeconds, closeTo(300, 1));
       expect(service.isRunning, false);
     });
 

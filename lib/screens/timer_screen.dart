@@ -10,7 +10,17 @@ import '../widgets/preset_dialog.dart';
 
 /// Main screen of the Eieruhr app showing countdown and presets.
 class TimerScreen extends StatefulWidget {
-  const TimerScreen({super.key});
+  /// Optional preset name passed from the home screen widget.
+  final String? initialPresetName;
+
+  /// Optional preset duration (seconds) passed from the home screen widget.
+  final int? initialPresetDuration;
+
+  const TimerScreen({
+    super.key,
+    this.initialPresetName,
+    this.initialPresetDuration,
+  });
 
   @override
   State<TimerScreen> createState() => _TimerScreenState();
@@ -42,6 +52,22 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
       _isLoading = false;
     });
     await _widgetService.syncPresetsToWidget(presets);
+
+    // Reason: If launched from the home screen widget, auto-start the timer.
+    if (widget.initialPresetName != null &&
+        widget.initialPresetDuration != null &&
+        widget.initialPresetDuration! > 0) {
+      _activePresetName = widget.initialPresetName!;
+      _timerService.setDuration(widget.initialPresetDuration!);
+      // Try to highlight the matching preset in the list.
+      for (int i = 0; i < _presets.length; i++) {
+        if (_presets[i].name == widget.initialPresetName) {
+          _selectedPresetIndex = i;
+          break;
+        }
+      }
+      _startTimer();
+    }
   }
 
   @override
@@ -50,6 +76,28 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
     _timerService.dispose();
     _notificationService.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      _syncTimerFromBackground();
+    }
+  }
+
+  /// Syncs timer state when the app resumes from background.
+  void _syncTimerFromBackground() {
+    _timerService.syncFromBackground(
+      onTick: (remaining) {
+        setState(() {});
+      },
+      onComplete: () {
+        setState(() {});
+        _onTimerComplete();
+      },
+    );
+    setState(() {});
   }
 
   /// Selects a preset and sets the timer duration.
@@ -69,8 +117,8 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
     });
   }
 
-  /// Starts the countdown timer.
-  void _startTimer() {
+  /// Starts the countdown timer and schedules a background notification.
+  Future<void> _startTimer() async {
     _timerService.start(
       onTick: (remaining) {
         setState(() {});
@@ -80,32 +128,45 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
         _onTimerComplete();
       },
     );
+
+    // Schedule a notification at the exact end time so the alarm fires
+    // even when the screen is off or the app is in the background.
+    if (_timerService.endTime != null) {
+      await _notificationService.scheduleAlarmAt(
+        endTime: _timerService.endTime!,
+        presetName: _activePresetName,
+      );
+    }
     setState(() {});
   }
 
   /// Called when the timer reaches zero.
   Future<void> _onTimerComplete() async {
+    // Cancel the scheduled notification (it may have already fired).
+    await _notificationService.cancelScheduledAlarm();
     await _notificationService.showTimerFinishedNotification(_activePresetName);
     await _notificationService.playAlarm();
     setState(() {});
   }
 
   /// Stops the alarm and resets the timer.
-  void _stopAlarm() {
-    _notificationService.stopAlarm();
+  Future<void> _stopAlarm() async {
+    await _notificationService.stopAlarm();
     _timerService.reset();
     setState(() {});
   }
 
   /// Pauses the timer.
-  void _pauseTimer() {
+  Future<void> _pauseTimer() async {
     _timerService.pause();
+    await _notificationService.cancelScheduledAlarm();
     setState(() {});
   }
 
   /// Resets the timer to the selected preset's duration.
   void _resetTimer() {
     _timerService.reset();
+    _notificationService.cancelScheduledAlarm();
     setState(() {});
   }
 
