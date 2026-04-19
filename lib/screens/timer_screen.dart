@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../models/timer_preset.dart';
 import '../services/preset_service.dart';
 import '../services/timer_service.dart';
 import '../services/notification_service.dart';
 import '../services/widget_service.dart';
+import '../services/foreground_service.dart';
 import '../widgets/countdown_display.dart';
 import '../widgets/preset_list.dart';
 import '../widgets/preset_dialog.dart';
@@ -31,6 +33,7 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
   final TimerService _timerService = TimerService();
   final NotificationService _notificationService = NotificationService();
   final WidgetService _widgetService = WidgetService();
+  final ForegroundService _foregroundService = ForegroundService();
 
   List<TimerPreset> _presets = [];
   int? _selectedPresetIndex;
@@ -41,10 +44,13 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Reason: Listen for timer completion messages from foreground task
+    FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
     _init();
   }
 
   Future<void> _init() async {
+    _foregroundService.init();
     await _notificationService.init();
     final presets = await _presetService.loadPresets();
     setState(() {
@@ -72,10 +78,19 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
     WidgetsBinding.instance.removeObserver(this);
     _timerService.dispose();
     _notificationService.dispose();
     super.dispose();
+  }
+
+  /// Handles data received from the foreground task.
+  void _onReceiveTaskData(Object data) {
+    if (data == 'timer_complete') {
+      // Timer completed while in background - sync and play alarm
+      _syncTimerFromBackground();
+    }
   }
 
   @override
@@ -136,6 +151,15 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
         endTime: _timerService.endTime!,
         presetName: _activePresetName,
       );
+      // Start foreground service to keep app alive for alarm sound
+      await _foregroundService.start(
+        endTime: _timerService.endTime!,
+        presetName: _activePresetName,
+        onComplete: () {
+          // Foreground service detected timer completion
+          // The timer service will handle the actual completion via syncFromBackground
+        },
+      );
     }
     setState(() {});
   }
@@ -152,6 +176,7 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
   /// Stops the alarm and resets the timer.
   Future<void> _stopAlarm() async {
     await _notificationService.stopAlarm();
+    await _foregroundService.stop();
     _timerService.reset();
     setState(() {});
   }
@@ -160,6 +185,7 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
   Future<void> _pauseTimer() async {
     _timerService.pause();
     await _notificationService.cancelScheduledAlarm();
+    await _foregroundService.stop();
     setState(() {});
   }
 
@@ -167,6 +193,7 @@ class _TimerScreenState extends State<TimerScreen> with WidgetsBindingObserver {
   void _resetTimer() {
     _timerService.reset();
     _notificationService.cancelScheduledAlarm();
+    _foregroundService.stop();
     setState(() {});
   }
 
